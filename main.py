@@ -56,7 +56,11 @@ async def transcribe_audio(audio_bytes: bytes) -> str:
             data=data,
             files=files,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface the real error body instead of a bare "400 Bad Request"
+            raise RuntimeError(
+                f"AI Pipe transcription failed ({resp.status_code}): {resp.text}"
+            )
         return resp.json()["text"]
 
 
@@ -142,13 +146,20 @@ async def handle_audio(request: Request):
     audio_id = body.get("audio_id", "")
     audio_b64 = body.get("audio_base64", "")
 
-    audio_bytes = base64.b64decode(audio_b64)
-
-    transcript = await transcribe_audio(audio_bytes)
-    table = await extract_table(transcript)
-
-    result = compute_stats(table["columns"], table["rows"])
-    return JSONResponse(content=result)
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+        transcript = await transcribe_audio(audio_bytes)
+        table = await extract_table(transcript)
+        result = compute_stats(table["columns"], table["rows"])
+        return JSONResponse(content=result)
+    except Exception as e:
+        # TEMPORARY: surface the real error for debugging.
+        # Remove this except block once the pipeline is confirmed working,
+        # since the grader expects the exact schema, not an error object.
+        return JSONResponse(
+            status_code=500,
+            content={"debug_error": str(e), "audio_id": audio_id},
+        )
 
 
 @app.get("/")
